@@ -3,6 +3,7 @@ import math
 import time
 import secrets
 import hashlib
+from collections import defaultdict
 from contextlib import contextmanager
 
 
@@ -32,16 +33,46 @@ def getgetch():
 
 
 def progress(entropy_bits, need):
+    entropy_bits = int(entropy_bits)
     need = max(entropy_bits, need)
     p = entropy_bits / need
     width = 50
     num_filled = int(width * entropy_bits // need)
     bar = '█' * num_filled + ' ' * (width - num_filled)
-    print(f'\r{p:6.1%}|{bar}| {entropy_bits:.0f}/{need:.0f} bits', end='    \r')
+    print(f'\r{p:6.1%}|{bar}| {entropy_bits}/{need} bits', end='    \r')
     if p < 1:
         return True
     print()
     return False
+
+
+def entropy(text):
+    num_bits = 0
+    counts = defaultdict(lambda: 0)
+    for i in range(len(text) - 1):
+        counts[text[i]] += 1
+        counts[text[i:i+2]] += 1
+    for i in range(len(text) - 1):
+        num_bits += math.log2(counts[text[i]] / counts[text[i:i+2]])
+    return num_bits
+
+
+def random_bytes(num):
+    hasher = hashlib.sha3_512(secrets.token_bytes(num))
+    assert num <= hasher.digest_size
+    user_input = b'\0\0'
+    triples = set()
+    with getgetch() as getch:
+        while progress(entropy(user_input), need=256):
+            c = getch().encode()
+            triple = user_input[-2:] + c
+            if triple in triples:
+                continue
+            triples.add(triple)
+            user_input += c
+            hasher.update(time.time_ns().to_bytes(16, 'big'))
+            hasher.update(c)
+    return hasher.digest()[:num]
 
 
 def mnemonic(entropy, wordlist):
@@ -58,27 +89,10 @@ def mnemonic(entropy, wordlist):
     return ' '.join(words)
 
 
-def entropy(num_bytes):
-    user_bits = 0
-    hasher = hashlib.shake_256(secrets.token_bytes(32))
-    prev_c = b'\0'
-    bins = {}
-    with getgetch() as getch:
-        while progress(user_bits, need=256):
-            c = getch().encode()
-            p_denom = bins[prev_c] = bins.get(prev_c, 0) + 1
-            p_num = bins[prev_c + c] = bins.get(prev_c + c, 0) + 1
-            user_bits += math.log2(p_denom / p_num)
-            hasher.update(time.time_ns().to_bytes(16, 'big'))
-            hasher.update(c)
-            prev_c = c
-    return hasher.digest(num_bytes)
-
-
 def app():
     wodlist_path = os.path.join(os.path.dirname(__file__), 'wordlist/english.txt')
     wordlist = [line.strip() for line in open(wodlist_path)]
     assert mnemonic(bytes.fromhex('3f9284bcb5c089863d0c7068a83893944e3b0d48dacf5e60d65b9e27942dfe2b'), wordlist) == 'display neither connect high ancient seek vintage mix hamster dove ceiling chuckle together mammal casino fly fury allow notice detail junk black weather jaguar'  # noqa: E501
     assert mnemonic(bytes.fromhex('335ab07f496eba24ce9671e2c117a5ce0140ee2263aad6f1052c94ac95a37544'), wordlist) == 'crew stereo cabin name two bar demise soda tissue anger truly orchard beef jacket maze inspire street market enroll citizen sing spider steak manage'  # noqa: E501
     assert mnemonic(bytes.fromhex('5737726319c3e98229dc27d261e8241593a8cbad0b2aaa5ebf23eae16c0e2abe'), wordlist) == 'fire romance occur crime direct scissors polar lumber sponsor aunt animal clinic dentist grape reflect grab prevent vote similar still bitter alpha priority scissors'  # noqa: E501
-    print(mnemonic(entropy(ENT//8), wordlist))
+    print(mnemonic(random_bytes(ENT//8), wordlist))
